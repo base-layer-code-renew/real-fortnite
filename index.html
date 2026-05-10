@@ -2,170 +2,33 @@
 <html>
   <head>
     <meta charset="utf-8">
-    <title>AR_P2P_JOYCON_SHOOTER</title>
+    <title>REAL_AR_P2P_SHOOTER</title>
     <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-      #ui { position: fixed; top: 10px; left: 10px; z-index: 1000; color: white; font-family: monospace; background: rgba(0,0,0,0.5); padding: 10px; pointer-events: none; }
-      #controls { pointer-events: auto; }
-      input { width: 150px; }
+      /* 現実を映すため、ブラウザの背景を透明に */
+      body { background-color: transparent; margin: 0; overflow: hidden; }
+      
+      /* UI群 */
+      #ui { position: fixed; top: 10px; left: 10px; z-index: 1000; color: white; font-family: monospace; background: rgba(0,0,0,0.6); padding: 10px; border-radius: 8px; max-width: 250px;}
+      #controls { margin-top: 10px; pointer-events: auto; }
+      input { width: 140px; padding: 5px; border-radius: 4px; border: none;}
+      button { padding: 5px 10px; margin-left: 5px; cursor: pointer; border-radius: 4px; border: none; background: #4caf50; color: white;}
+      #status-area div { margin-bottom: 5px; }
+
+      /* iOS対策: AR開始ボタン */
+      #ar-start-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 2000; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; }
+      #start-btn { padding: 15px 30px; font-size: 1.2em; background: #e91e63; color: white; border: none; border-radius: 30px; cursor: pointer; margin-top: 20px;}
     </style>
   </head>
   <body>
-    <div id="ui">
-      <div>My ID: <span id="my-id">...</span></div>
-      <div id="controls">
-        <input type="text" id="peer-id" placeholder="Partner's ID">
-        <button onclick="connectToPeer()">CONNECT</button>
-      </div>
-      <div id="status">Status: Waiting...</div>
-      <div id="joycon-status">Joy-Con: Not Connected</div>
+    
+    <div id="ar-start-overlay">
+      プレビュー画面
+      <button id="start-btn">カメラを許可してAR開始</button>
     </div>
 
-    <a-scene 
-      webxr="optionalFeatures: hit-test, local-floor; referenceSpaceType: local-floor"
-      renderer="antialias: true; alpha: true"
-      cursor="rayOrigin: mouse"
-    >
-      
-      <a-entity id="rig" position="0 0 0">
-        <a-entity id="camera" camera look-controls>
-          <a-entity id="weapon" position="0.2 -0.2 -0.5" rotation="0 0 0">
-            <a-box color="#444" width="0.05" height="0.05" depth="0.3"></a-box>
-            <a-box color="red" position="0 0.03 -0.1" width="0.01" height="0.02" depth="0.01"></a-box>
-          </a-entity>
-        </a-entity>
-      </a-entity>
-
-      <a-entity id="enemy" visible="false">
-        <a-sphere color="red" radius="0.15"></a-sphere>
-        <a-cylinder color="gray" radius="0.02" height="0.4" rotation="90 0 0" position="0.2 -0.2 -0.2"></a-cylinder>
-      </a-entity>
-
-      <a-light type="ambient" intensity="0.5"></a-light>
-      <a-light type="directional" position="1 2 1"></a-light>
-    </a-scene>
-
-    <script>
-      let peer, conn;
-      const myIdDisplay = document.getElementById('my-id');
-      const statusDisplay = document.getElementById('status');
-      const joyconDisplay = document.getElementById('joycon-status');
-      const cameraEl = document.getElementById('camera');
-      const enemyEl = document.getElementById('enemy');
-      let lastTime = 0;
-
-      // --- PeerJS Logic ---
-      peer = new Peer(); // ランダムIDで開始
-
-      peer.on('open', (id) => {
-        myIdDisplay.innerText = id;
-      });
-
-      peer.on('connection', (c) => {
-        conn = c;
-        setupConnection();
-      });
-
-      function connectToPeer() {
-        const id = document.getElementById('peer-id').value;
-        conn = peer.connect(id);
-        setupConnection();
-      }
-
-      function setupConnection() {
-        statusDisplay.innerText = "Status: Connected!";
-        enemyEl.setAttribute('visible', 'true');
-
-        conn.on('data', (data) => {
-          if (data.type === 'transform') {
-            enemyEl.setAttribute('position', data.pos);
-            enemyEl.setAttribute('rotation', data.rot);
-          } else if (data.type === 'fire') {
-            spawnBullet(data.pos, data.rot, 'blue');
-          }
-        });
-      }
-
-      // --- Game Loop (60fps) ---
-      function tick() {
-        // 1. 同期データの送信
-        if (conn && conn.open) {
-          const pos = cameraEl.getAttribute('position');
-          const rot = cameraEl.getAttribute('rotation');
-          conn.send({ type: 'transform', pos: pos, rot: rot });
-        }
-
-        // 2. Joy-Conの入力チェック (Gamepad API)
-        const gamepads = navigator.getGamepads();
-        for (let i = 0; i < gamepads.length; i++) {
-          const gp = gamepads[i];
-          if (gp) {
-            joyconDisplay.innerText = `Joy-Con: ${gp.id.substring(0, 10)}...`;
-            // ボタン0 (A/ZR) が押された瞬間を検知
-            if (gp.buttons[0].pressed || gp.buttons[1].pressed) {
-              handleFire();
-            }
-          }
-        }
-        requestAnimationFrame(tick);
-      }
-      requestAnimationFrame(tick);
-
-      // --- Shooting Logic ---
-      let canFire = true;
-      function handleFire() {
-        if (!canFire) return;
-        canFire = false;
-        setTimeout(() => { canFire = true; }, 300); // 連射制限
-
-        const pos = Object.assign({}, cameraEl.getAttribute('position'));
-        const rot = Object.assign({}, cameraEl.getAttribute('rotation'));
-
-        // 自分の画面で弾を出す
-        spawnBullet(pos, rot, 'yellow');
-
-        // 相手に発砲を伝える
-        if (conn && conn.open) {
-          conn.send({ type: 'fire', pos: pos, rot: rot });
-        }
-      }
-
-      function spawnBullet(pos, rot, color) {
-        const bullet = document.createElement('a-sphere');
-        bullet.setAttribute('radius', '0.05');
-        bullet.setAttribute('color', color);
-        bullet.setAttribute('position', pos);
-        
-        // 進行方向の計算（A-Frameの動的プロパティを利用）
-        const scene = document.querySelector('a-scene');
-        scene.appendChild(bullet);
-
-        // 簡易的な弾道（前方に飛ばす）
-        let distance = 0;
-        const speed = 0.5;
-        const angle = rot.y * (Math.PI / 180);
-        const pitch = rot.x * (Math.PI / 180);
-
-        const moveInterval = setInterval(() => {
-          distance += speed;
-          pos.x -= Math.sin(angle) * speed;
-          pos.z -= Math.cos(angle) * speed;
-          pos.y += Math.sin(pitch) * speed;
-          bullet.setAttribute('position', pos);
-          if (distance > 20) {
-            clearInterval(moveInterval);
-            bullet.parentNode.removeChild(bullet);
-          }
-        }, 20);
-      }
-
-      // iOS対策: センサーと通信の開始にユーザーインタラクションが必要
-      window.addEventListener('click', () => {
-        if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-          DeviceOrientationEvent.requestPermission();
-        }
-      });
-    </script>
-  </body>
-</html>
+    <div id="ui">
+      <div id="status-area">
+        <div>My ID: <span id="my-id" style="color: #ffeb3b;">...</span></div>
+        <div id="status">Status: Waiting...http://googleusercontent.com/generated_image_content/0
