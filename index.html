@@ -1,34 +1,265 @@
+```html
 <!DOCTYPE html>
-<html>
+<html lang="ja">
   <head>
     <meta charset="utf-8">
-    <title>REAL_AR_P2P_SHOOTER</title>
+    <title>REAL_AR_SHOOTER_IOS</title>
     <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-      /* 現実を映すため、ブラウザの背景を透明に */
-      body { background-color: transparent; margin: 0; overflow: hidden; }
+      body { margin: 0; overflow: hidden; background-color: #000; }
       
-      /* UI群 */
-      #ui { position: fixed; top: 10px; left: 10px; z-index: 1000; color: white; font-family: monospace; background: rgba(0,0,0,0.6); padding: 10px; border-radius: 8px; max-width: 250px;}
-      #controls { margin-top: 10px; pointer-events: auto; }
-      input { width: 140px; padding: 5px; border-radius: 4px; border: none;}
-      button { padding: 5px 10px; margin-left: 5px; cursor: pointer; border-radius: 4px; border: none; background: #4caf50; color: white;}
-      #status-area div { margin-bottom: 5px; }
+      /* 強制開始スクリーン（iOSのポップアップを出すために必須） */
+      #start-screen {
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0, 0, 0, 0.9);
+        z-index: 9999; display: flex; flex-direction: column;
+        justify-content: center; align-items: center; color: white;
+      }
+      #start-btn {
+        padding: 20px 40px; font-size: 24px; font-weight: bold;
+        background: #e91e63; color: white; border: none; border-radius: 12px;
+        cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+      }
 
-      /* iOS対策: AR開始ボタン */
-      #ar-start-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 2000; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; }
-      #start-btn { padding: 15px 30px; font-size: 1.2em; background: #e91e63; color: white; border: none; border-radius: 30px; cursor: pointer; margin-top: 20px;}
+      /* ゲームUI */
+      #ui {
+        position: fixed; top: 10px; left: 10px; z-index: 1000;
+        color: white; font-family: monospace; background: rgba(0,0,0,0.6);
+        padding: 10px; border-radius: 8px; pointer-events: none;
+      }
+      #controls { pointer-events: auto; margin-top: 10px; }
+      input { width: 140px; padding: 5px; }
+      button.btn-connect { padding: 5px 10px; background: #4caf50; color: white; border: none; cursor: pointer; }
     </style>
   </head>
   <body>
-    
-    <div id="ar-start-overlay">
-      プレビュー画面
-      <button id="start-btn">カメラを許可してAR開始</button>
+
+    <!-- iOS権限リクエスト用画面 -->
+    <div id="start-screen">
+      <h1>ARシューティング</h1>
+      <p>※開始時にカメラとジャイロの許可を求められます</p>
+      <button id="start-btn">許可してスタート！</button>
     </div>
 
+    <!-- UI -->
     <div id="ui">
-      <div id="status-area">
-        <div>My ID: <span id="my-id" style="color: #ffeb3b;">...</span></div>
-        <div id="status">Status: Waiting...http://googleusercontent.com/generated_image_content/0
+      <div>My ID: <span id="my-id" style="color: yellow;">...</span></div>
+      <div id="controls">
+        <input type="text" id="peer-id" placeholder="相手のIDを入力">
+        <button class="btn-connect" onclick="connectToPeer()">接続</button>
+      </div>
+      <div id="status">Status: 待機中...</div>
+      <div id="joycon-status">Joy-Con: 未接続</div>
+    </div>
+
+    <!-- カメラの映像を受け取る隠しVideo要素 -->
+    <video id="webcam" autoplay playsinline webkit-playsinline muted style="display:none;"></video>
+
+    <!-- A-Frame Scene -->
+    <!-- VRゴーグル用に画面分割(ステレオ)させるため、通常のVRモードを使用 -->
+    <a-scene background="color: #000">
+      
+      <!-- 自分の体とカメラ -->
+      <a-entity id="rig" position="0 1.6 0">
+        <a-entity id="camera" camera look-controls>
+          
+          <!-- 【超重要】現実の映像を映す巨大スクリーン -->
+          <!-- カメラの子要素なので、頭を振ると常に目の前にあり、結果的にARパススルーになる -->
+          <a-plane id="bg-plane" src="#webcam" width="32" height="18" position="0 0 -10" material="shader: flat;"></a-plane>
+
+          <!-- 自分の銃（グレーの箱）と照準（赤い点） -->
+          <a-entity position="0 -0.3 -1">
+            <a-box color="#555" width="0.1" height="0.1" depth="0.5"></a-box>
+            <a-sphere color="red" radius="0.02" position="0 0.05 -0.2"></a-sphere>
+          </a-entity>
+
+        </a-entity>
+      </a-entity>
+
+      <!-- 相手の姿（最初は見えない） -->
+      <a-entity id="enemy" visible="false">
+        <a-sphere color="blue" radius="0.2"></a-sphere>
+        <a-cylinder color="gray" radius="0.05" height="0.6" rotation="90 0 0" position="0.3 -0.2 -0.3"></a-cylinder>
+      </a-entity>
+
+      <!-- 現実世界の障害物（試しに青い柱を配置） -->
+      <a-cylinder color="blue" radius="0.2" height="2" position="2 0 -3"></a-cylinder>
+      <a-box color="green" width="1" height="1" depth="1" position="-2 0.5 -4"></a-box>
+
+      <a-light type="ambient" intensity="0.8"></a-light>
+    </a-scene>
+
+    <script>
+      const startBtn = document.getElementById('start-btn');
+      const startScreen = document.getElementById('start-screen');
+      const webcam = document.getElementById('webcam');
+      const joyconDisplay = document.getElementById('joycon-status');
+
+      // ==========================================
+      // 1. 権限リクエスト（iOSの壁を突破するロジック）
+      // ==========================================
+      startBtn.addEventListener('click', async () => {
+        
+        // ① ジャイロセンサー（DeviceOrientation）の許可
+        if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+          try {
+            const permission = await DeviceOrientationEvent.requestPermission();
+            if (permission !== 'granted') {
+              alert('ジャイロセンサーが許可されませんでした。首を振っても画面が動きません。');
+            }
+          } catch (e) {
+            console.error('ジャイロ許可エラー:', e);
+          }
+        }
+
+        // ② 背面カメラの許可
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'environment' }, // 背面カメラを指定
+            audio: false
+          });
+          
+          // 取得したカメラ映像を隠しVideoに流し込む
+          webcam.srcObject = stream;
+          await webcam.play();
+          
+          // スタート画面を消してゲーム開始
+          startScreen.style.display = 'none';
+        } catch (err) {
+          alert('カメラの起動に失敗しました。iPhoneの「設定」>「Safari」>「カメラ」が許可されているか確認してください。\n詳細: ' + err.message);
+        }
+      });
+
+      // ==========================================
+      // 2. PeerJSの通信ロジック
+      // ==========================================
+      let peer = new Peer();
+      let conn = null;
+      const myIdDisplay = document.getElementById('my-id');
+      const statusDisplay = document.getElementById('status');
+      const enemyEl = document.getElementById('enemy');
+      const cameraEl = document.getElementById('camera');
+
+      peer.on('open', (id) => {
+        myIdDisplay.innerText = id;
+      });
+
+      peer.on('connection', (c) => {
+        conn = c;
+        setupConnection();
+      });
+
+      window.connectToPeer = function() {
+        const id = document.getElementById('peer-id').value;
+        if(!id) return;
+        statusDisplay.innerText = "Status: 接続中...";
+        conn = peer.connect(id);
+        setupConnection();
+      }
+
+      function setupConnection() {
+        statusDisplay.innerText = "Status: 接続完了！";
+        enemyEl.setAttribute('visible', 'true'); // 相手を表示
+
+        // 相手からデータを受け取った時
+        conn.on('data', (data) => {
+          if (data.type === 'move') {
+            enemyEl.setAttribute('position', data.pos);
+            enemyEl.setAttribute('rotation', data.rot);
+          } else if (data.type === 'fire') {
+            spawnBullet(data.pos, data.rot, 'yellow'); // 相手の弾
+          }
+        });
+      }
+
+      // ==========================================
+      // 3. ゲームループ (Joy-Con監視と同期)
+      // ==========================================
+      let canFire = true;
+
+      function gameLoop() {
+        // --- 通信同期 ---
+        if (conn && conn.open) {
+          const pos = cameraEl.getAttribute('position');
+          const rot = cameraEl.getAttribute('rotation');
+          conn.send({ type: 'move', pos: pos, rot: rot });
+        }
+
+        // --- Joy-Con監視 ---
+        const gamepads = navigator.getGamepads();
+        let joyconFound = false;
+        for (let i = 0; i < gamepads.length; i++) {
+          const gp = gamepads[i];
+          if (gp) {
+            joyconFound = true;
+            joyconDisplay.innerText = `Joy-Con: 接続中 (${gp.id.substring(0, 5)})`;
+            
+            // ボタンが押されたら発砲 (Aボタンやトリガー)
+            if (gp.buttons[0].pressed || gp.buttons[1].pressed || gp.buttons[6].pressed || gp.buttons[7].pressed) {
+              handleFire();
+            }
+          }
+        }
+        if (!joyconFound) joyconDisplay.innerText = "Joy-Con: 未接続";
+
+        requestAnimationFrame(gameLoop);
+      }
+      requestAnimationFrame(gameLoop);
+
+      // ==========================================
+      // 4. 発砲ロジック
+      // ==========================================
+      function handleFire() {
+        if (!canFire) return;
+        canFire = false;
+        setTimeout(() => { canFire = true; }, 300); // 0.3秒の連射制限
+
+        const pos = Object.assign({}, cameraEl.getAttribute('position'));
+        const rot = Object.assign({}, cameraEl.getAttribute('rotation'));
+
+        // 自分の画面に弾を出す
+        spawnBullet(pos, rot, 'red');
+
+        // 相手に発砲を伝える
+        if (conn && conn.open) {
+          conn.send({ type: 'fire', pos: pos, rot: rot });
+        }
+      }
+
+      function spawnBullet(pos, rot, color) {
+        const bullet = document.createElement('a-sphere');
+        bullet.setAttribute('radius', '0.05');
+        bullet.setAttribute('color', color);
+        
+        // カメラの少し前から発射
+        pos.y -= 0.2; 
+        pos.z -= 0.5;
+        bullet.setAttribute('position', pos);
+        
+        document.querySelector('a-scene').appendChild(bullet);
+
+        // 弾を前に飛ばす
+        let distance = 0;
+        const speed = 0.5;
+        const angleY = rot.y * (Math.PI / 180);
+        const angleX = rot.x * (Math.PI / 180);
+
+        const moveInterval = setInterval(() => {
+          distance += speed;
+          pos.x -= Math.sin(angleY) * speed;
+          pos.z -= Math.cos(angleY) * speed;
+          pos.y += Math.sin(angleX) * speed;
+          bullet.setAttribute('position', pos);
+          
+          if (distance > 30) {
+            clearInterval(moveInterval);
+            bullet.parentNode.removeChild(bullet);
+          }
+        }, 20);
+      }
+    </script>
+  </body>
+</html>
+
+```
